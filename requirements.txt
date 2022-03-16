@@ -1,0 +1,7 @@
+tda-api
+numpy
+pandas
+Authlib
+selenium
+setuptools
+-e git+https://github.com/bjahnke/abstract_broker.git#egg=abstract_broker

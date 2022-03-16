@@ -5,19 +5,16 @@ analyzing order/balance/position history
 
 TODO order history?
 """
-from __future__ import annotations
 
+from __future__ import annotations
 import asyncio
 import datetime
-
 import authlib
 from authlib.integrations.base_client import OAuthError
 from tda.orders.common import OrderType, Duration, Session
-from tda.orders.generic import OrderBuilder
-
+# from tda.orders.generic import OrderBuilder
 import abstract_broker.abstract as abstract_access
-import credentials
-
+# import credentials
 import tda
 import selenium.webdriver
 import pandas as pd
@@ -31,8 +28,6 @@ import json
 import tda_access.utils as utils
 
 OrderStatus = tda.client.Client.Order.Status
-
-_ACCOUNT_ID = credentials.ACCOUNT_ID
 
 
 def parse_orders(orders: t.List[t.Dict]) -> t.Dict[int, t.Dict]:
@@ -245,175 +240,285 @@ class AccountInfo:
     #     return parse_orders(raw_orders)
 
 
-class _LocalClientMeta(type):
-    _cached_account_info: t.Union[None, AccountInfo] = None
-    _cached_orders: t.List[t.Dict] = None
+# class _LocalClientMeta(type):
+#     _cached_account_info: t.Union[None, AccountInfo] = None
+#     _cached_orders: t.List[t.Dict] = None
+#
+#     TDA_CLIENT: tda.client.Client = tda.auth.easy_client(
+#         webdriver_func=selenium.webdriver.Firefox, **credentials.CLIENT_PARAMS
+#     )
+#     STREAM_CLIENT: tda.streaming.StreamClient = tda.streaming.StreamClient(
+#         client=TDA_CLIENT, account_id=_ACCOUNT_ID
+#     )
+#
+#     _stream_data = []
+#
+#     def account_info(cls, cached=False) -> AccountInfo:
+#         if cached is False or cls._cached_account_info is None:
+#
+#             # dump account data to txt for reference
+#             while True:
+#                 try:
+#                     resp = LocalClient.TDA_CLIENT.get_account(
+#                         account_id=_ACCOUNT_ID,
+#                         fields=[
+#                             tda.client.Client.Account.Fields.ORDERS,
+#                             tda.client.Client.Account.Fields.POSITIONS,
+#                         ],
+#                     )
+#                 except authlib.integrations.base_client.errors.OAuthError as e:
+#                     print(e)
+#                     continue
+#
+#                 account_info_raw = resp.json()
+#                 try:
+#                     cls._cached_account_info = AccountInfo(account_info_raw)
+#                 except (KeyError, json.decoder.JSONDecodeError):
+#                     pass
+#                 else:
+#                     with open("account_data.json", "w") as outfile:
+#                         json.dump(account_info_raw, outfile, indent=4)
+#                     break
+#         return cls._cached_account_info
+#
+#     def orders(cls, status: OrderStatus = None, cached=False):
+#         if cached is False or cls._cached_orders is None:
+#             cls._cached_orders = cls.TDA_CLIENT.get_orders_by_path(
+#                 account_id=_ACCOUNT_ID,
+#                 from_entered_datetime=datetime.datetime.utcnow()
+#                 - datetime.timedelta(days=59),
+#                 status=status,
+#             ).json()
+#         return cls._cached_orders
+#
+#     def orders_by_id(cls, status: OrderStatus = None, cached=False):
+#         """returns orders where key is the order id"""
+#         return parse_orders(cls.orders(status=status, cached=cached))
+#
+#     def get_order_data(cls, order_id, cached=False) -> OrderData:
+#         """TODO call in debugger to get location of symbol name"""
+#         order = cls.orders_by_id(cached=cached)[order_id]
+#         return OrderData(
+#             name=order["orderLegCollection"][0]["instrument"]["symbol"],
+#             direction=utils.Side(
+#                 order["orderLegCollection"][0]["instruction"]
+#             ),
+#             quantity=order["filledQuantity"],
+#             stop_loss=None,
+#             status=OrderStatus(order["status"]),
+#         )
+#
+#     def get_queued_stop_order(
+#         cls, symbol: str
+#     ) -> t.Union[t.Tuple[OrderData, int], t.Tuple[None, None]]:
+#         """"""
+#         orders = cls.orders()
+#         stop_order_data = None
+#         stop_order_id = None
+#         for order in orders:
+#             order_leg_collection = order["orderLegCollection"][0]
+#             if (
+#                 order_leg_collection["instrument"]["symbol"] == symbol
+#                 and order["orderType"] == "STOP"
+#                 and order_leg_collection["positionEffect"] == "CLOSING"
+#                 and order["status"] == "QUEUED"
+#             ):
+#                 # direction should match the OPEN position direction
+#                 direction = utils.Side.LONG
+#                 if order_leg_collection["instruction"] == "BUY_TO_COVER":
+#                     direction = utils.Side.SHORT
+#
+#                 stop_order_data = OrderData(
+#                     name=symbol,
+#                     direction=direction,
+#                     quantity=order["quantity"],
+#                     stop_loss=order["stopPrice"],
+#                 )
+#                 stop_order_id = order["orderId"]
+#                 break
+#         return stop_order_data, stop_order_id
+#
+#     def place_order_spec(cls, order_spec) -> t.Tuple[int, str]:
+#         """place order with tda-api order spec, return order id"""
+#         cls.TDA_CLIENT.place_order(account_id=_ACCOUNT_ID, order_spec=order_spec)
+#         order_data = cls.orders()[0]
+#         return order_data["orderId"], order_data["status"]
+#
+#     def init_equity_stream(cls, symbols: t.List[str]):
+#         """
+#         stream price data of the given symbols every 500ms
+#         use this code to execute function: asyncio.run(LocalClient.initiate_stream(<enter symbols here>)
+#         """
+#         return configure_stream(
+#             stream_client=cls.STREAM_CLIENT,
+#             add_book_handler=cls.STREAM_CLIENT.add_chart_equity_handler,
+#             symbols=symbols,
+#             book_subs=cls.STREAM_CLIENT.chart_equity_subs,
+#         )
+#
+#     def init_futures_stream(cls, symbols: t.List[str]) -> t.Callable:
+#         # TODO add handler converting stream to ohlc bars + writes to csv
+#         return configure_stream(
+#             stream_client=cls.STREAM_CLIENT,
+#             add_book_handler=cls.STREAM_CLIENT.add_chart_futures_handler,
+#             symbols=symbols,
+#             book_subs=cls.STREAM_CLIENT.chart_futures_subs,
+#         )
+#
+#     def market_is_open(cls, market_type: tda.client.Client.Markets) -> bool:
+#         """
+#         TODO move to MarketData class
+#         """
+#         resp = cls.TDA_CLIENT.get_hours_for_single_market(
+#             market_type, datetime.datetime.now()
+#         )
+#         resp = resp.json()
+#         return resp["equity"]["EQ"]["isOpen"]
+#
+#     def market_was_open(
+#         cls, market_type: tda.client.Client.Markets, time_ago: datetime.timedelta
+#     ):
+#         resp = cls.TDA_CLIENT.get_hours_for_single_market(
+#             market_type, datetime.datetime.now()
+#         )
+#         resp = resp.json()
+#         market_end = resp["equity"]["EQ"]["sessionHours"]["regularMarket"][0]["end"][
+#             :-6
+#         ]
+#         market_end = datetime.datetime.strptime(market_end, "%Y-%m-%dT%H:%M:%S")
+#         return datetime.datetime.now() - market_end <= time_ago
+#
+#     def cancel_order(cls, order_id: int):
+#         cls.TDA_CLIENT.cancel_order(order_id=order_id, account_id=_ACCOUNT_ID)
 
-    TDA_CLIENT: tda.client.Client = tda.auth.easy_client(
-        webdriver_func=selenium.webdriver.Firefox, **credentials.CLIENT_PARAMS
-    )
-    STREAM_CLIENT: tda.streaming.StreamClient = tda.streaming.StreamClient(
-        client=TDA_CLIENT, account_id=_ACCOUNT_ID
-    )
 
-    _stream_data = []
+# # create td client
+# class LocalClient(metaclass=_LocalClientMeta):
+#     OrderStatus = tda.client.Client.Order.Status
+#     cached_account_info: AccountInfo = None
+#
+#     @classmethod
+#     def price_history(
+#         cls, symbol: str, freq_range: tdargs.FreqRangeArgs,
+#     ) -> pd.DataFrame:
+#         """
+#         :param symbol:
+#         :param freq_range:
+#         :return:
+#         """
+#         # get historical data, store as dataframe, convert datetime (ms) to y-m-d-etc
+#         try:
+#             resp = cls.TDA_CLIENT.get_price_history(
+#                 symbol,
+#                 period_type=freq_range.range.period.type,
+#                 period=freq_range.range.period.val,
+#                 frequency_type=freq_range.freq.type,
+#                 frequency=freq_range.freq.val,
+#                 start_datetime=freq_range.range.start,
+#                 end_datetime=freq_range.range.end,
+#                 need_extended_hours_data=False,
+#             )
+#         except OAuthError:
+#             raise utils.EmptyDataError
+#
+#         try:
+#             history = resp.json()
+#         except json.decoder.JSONDecodeError:
+#             raise utils.EmptyDataError
+#
+#         if history.get("candles", None) is None:
+#             error = history.get("error", None)
+#             if error is None and history.get("fault", None) is not None:
+#                 raise utils.FaultReceivedError(
+#                     f"tda responded with fault at {symbol}: {error}"
+#                 )
+#             if error == "Not Found":
+#                 print(f"td api could not find symbol {symbol}")
+#                 raise utils.TickerNotFoundError(
+#                     f"td api could not find symbol {symbol}"
+#                 )
+#             elif error is None:
+#                 raise Exception
+#             else:
+#                 raise utils.EmptyDataError(
+#                     f"No data received for symbol {symbol}"
+#                 )
+#
+#         df = pd.DataFrame(history["candles"])
+#
+#         if history["empty"] is True:
+#             raise utils.EmptyDataError(f"No data received for symbol {symbol}")
+#
+#         # datetime given in ms, convert to readable date
+#         df.datetime = pd.to_datetime(df.datetime, unit="ms")
+#
+#         # for truncating to date only (not hours/minutes/seconds)
+#         # df.datetime = df.datetime.dt.date
+#
+#         # rename datetime to time for finplot compatibility
+#         df = df.rename(columns={"datetime": "time"})
+#         df.index = df.time
+#         # drop columns other than those mentioned (maybe want to save volume)
+#         df["b_high"] = df.high
+#         df["b_low"] = df.low
+#         df["b_close"] = df.close
+#
+#         df = df[
+#             ["b_high", "b_low", "b_close", "open", "high", "close", "low", "volume"]
+#         ]
+#
+#         return df
+#
+#     @classmethod
+#     def price_history_stream(
+#         cls, symbol: str, freq_range: tdargs.FreqRangeArgs,
+#     ) -> t.Tuple[pd.DataFrame, t.Any]:
+#         return (
+#             cls.price_history(symbol=symbol, freq_range=freq_range),
+#             datetime.timedelta(seconds=5),
+#         )
+#
+#     @classmethod
+#     def init_position(
+#         cls, symbol, quantity, side, stop_value=None, data_row=None
+#     ) -> Position:
+#         return Position(symbol, quantity, side, stop_value=stop_value, data_row=None)
 
-    def account_info(cls, cached=False) -> AccountInfo:
-        if cached is False or cls._cached_account_info is None:
 
-            # dump account data to txt for reference
-            while True:
-                try:
-                    resp = LocalClient.TDA_CLIENT.get_account(
-                        account_id=_ACCOUNT_ID,
-                        fields=[
-                            tda.client.Client.Account.Fields.ORDERS,
-                            tda.client.Client.Account.Fields.POSITIONS,
-                        ],
-                    )
-                except authlib.integrations.base_client.errors.OAuthError as e:
-                    print(e)
-                    continue
+class TdBrokerAccount(abstract_access.AbstractBrokerAccount):
+    pass
 
-                account_info_raw = resp.json()
-                try:
-                    cls._cached_account_info = AccountInfo(account_info_raw)
-                except (KeyError, json.decoder.JSONDecodeError):
-                    pass
-                else:
-                    with open("account_data.json", "w") as outfile:
-                        json.dump(account_info_raw, outfile, indent=4)
-                    break
-        return cls._cached_account_info
 
-    def orders(cls, status: OrderStatus = None, cached=False):
-        if cached is False or cls._cached_orders is None:
-            cls._cached_orders = cls.TDA_CLIENT.get_orders_by_path(
-                account_id=_ACCOUNT_ID,
-                from_entered_datetime=datetime.datetime.utcnow()
-                - datetime.timedelta(days=59),
-                status=status,
-            ).json()
-        return cls._cached_orders
+class TdBrokerClient(abstract_access.AbstractBrokerClient):
+    _client: tda.client.Client
 
-    def orders_by_id(cls, status: OrderStatus = None, cached=False):
-        """returns orders where key is the order id"""
-        return parse_orders(cls.orders(status=status, cached=cached))
+    def __init__(self, credentials: t.Dict):
+        self._client_credentials = credentials['client']
+        self._account_id = credentials['account_id']
+        super().__init__(self._client_credentials)
+        self._cached_orders = None
 
-    def get_order_data(cls, order_id, cached=False) -> OrderData:
-        """TODO call in debugger to get location of symbol name"""
-        order = cls.orders_by_id(cached=cached)[order_id]
-        return OrderData(
-            name=order["orderLegCollection"][0]["instrument"]["symbol"],
-            direction=utils.Side(
-                order["orderLegCollection"][0]["instruction"]
-            ),
-            quantity=order["filledQuantity"],
-            stop_loss=None,
-            status=OrderStatus(order["status"]),
+    @staticmethod
+    def _get_broker_client(credentials) -> tda.client.Client:
+        return tda.auth.easy_client(
+            webdriver_func=selenium.webdriver.Firefox,
+            **credentials.CLIENT_PARAMS
         )
 
-    def get_queued_stop_order(
-        cls, symbol: str
-    ) -> t.Union[t.Tuple[OrderData, int], t.Tuple[None, None]]:
-        """"""
-        orders = cls.orders()
-        stop_order_data = None
-        stop_order_id = None
-        for order in orders:
-            order_leg_collection = order["orderLegCollection"][0]
-            if (
-                order_leg_collection["instrument"]["symbol"] == symbol
-                and order["orderType"] == "STOP"
-                and order_leg_collection["positionEffect"] == "CLOSING"
-                and order["status"] == "QUEUED"
-            ):
-                # direction should match the OPEN position direction
-                direction = utils.Side.LONG
-                if order_leg_collection["instruction"] == "BUY_TO_COVER":
-                    direction = utils.Side.SHORT
+    def account_info(self, *args, **kwargs) -> t.Type[TdBrokerAccount]:
+        pass
 
-                stop_order_data = OrderData(
-                    name=symbol,
-                    direction=direction,
-                    quantity=order["quantity"],
-                    stop_loss=order["stopPrice"],
-                )
-                stop_order_id = order["orderId"]
-                break
-        return stop_order_data, stop_order_id
-
-    def place_order_spec(cls, order_spec) -> t.Tuple[int, str]:
-        """place order with tda-api order spec, return order id"""
-        cls.TDA_CLIENT.place_order(account_id=_ACCOUNT_ID, order_spec=order_spec)
-        order_data = cls.orders()[0]
-        return order_data["orderId"], order_data["status"]
-
-    def init_equity_stream(cls, symbols: t.List[str]):
+    def price_history(self, symbol, freq_range: tdargs.FreqRangeArgs) -> pd.DataFrame:
         """
-        stream price data of the given symbols every 500ms
-        use this code to execute function: asyncio.run(LocalClient.initiate_stream(<enter symbols here>)
-        """
-        return configure_stream(
-            stream_client=cls.STREAM_CLIENT,
-            add_book_handler=cls.STREAM_CLIENT.add_chart_equity_handler,
-            symbols=symbols,
-            book_subs=cls.STREAM_CLIENT.chart_equity_subs,
-        )
-
-    def init_futures_stream(cls, symbols: t.List[str]) -> t.Callable:
-        # TODO add handler converting stream to ohlc bars + writes to csv
-        return configure_stream(
-            stream_client=cls.STREAM_CLIENT,
-            add_book_handler=cls.STREAM_CLIENT.add_chart_futures_handler,
-            symbols=symbols,
-            book_subs=cls.STREAM_CLIENT.chart_futures_subs,
-        )
-
-    def market_is_open(cls, market_type: tda.client.Client.Markets) -> bool:
-        """
-        TODO move to MarketData class
-        """
-        resp = cls.TDA_CLIENT.get_hours_for_single_market(
-            market_type, datetime.datetime.now()
-        )
-        resp = resp.json()
-        return resp["equity"]["EQ"]["isOpen"]
-
-    def market_was_open(
-        cls, market_type: tda.client.Client.Markets, time_ago: datetime.timedelta
-    ):
-        resp = cls.TDA_CLIENT.get_hours_for_single_market(
-            market_type, datetime.datetime.now()
-        )
-        resp = resp.json()
-        market_end = resp["equity"]["EQ"]["sessionHours"]["regularMarket"][0]["end"][
-            :-6
-        ]
-        market_end = datetime.datetime.strptime(market_end, "%Y-%m-%dT%H:%M:%S")
-        return datetime.datetime.now() - market_end <= time_ago
-
-    def cancel_order(cls, order_id: int):
-        cls.TDA_CLIENT.cancel_order(order_id=order_id, account_id=_ACCOUNT_ID)
-
-
-# create td client
-class LocalClient(metaclass=_LocalClientMeta):
-    OrderStatus = tda.client.Client.Order.Status
-    cached_account_info: AccountInfo = None
-
-    @classmethod
-    def price_history(
-        cls, symbol: str, freq_range: tdargs.FreqRangeArgs,
-    ) -> pd.DataFrame:
-        """
+        attempt to get price history, catch and raise meaningful exceptions
+        when specific issues arise
         :param symbol:
         :param freq_range:
         :return:
         """
         # get historical data, store as dataframe, convert datetime (ms) to y-m-d-etc
         try:
-            resp = cls.TDA_CLIENT.get_price_history(
+            resp = self._client.get_price_history(
                 symbol,
                 period_type=freq_range.range.period.type,
                 period=freq_range.range.period.val,
@@ -449,54 +554,111 @@ class LocalClient(metaclass=_LocalClientMeta):
                     f"No data received for symbol {symbol}"
                 )
 
-        df = pd.DataFrame(history["candles"])
-
         if history["empty"] is True:
             raise utils.EmptyDataError(f"No data received for symbol {symbol}")
+
+        df = pd.DataFrame(history["candles"])
 
         # datetime given in ms, convert to readable date
         df.datetime = pd.to_datetime(df.datetime, unit="ms")
 
-        # for truncating to date only (not hours/minutes/seconds)
-        # df.datetime = df.datetime.dt.date
-
         # rename datetime to time for finplot compatibility
         df = df.rename(columns={"datetime": "time"})
         df.index = df.time
-        # drop columns other than those mentioned (maybe want to save volume)
-        df["b_high"] = df.high
-        df["b_low"] = df.low
-        df["b_close"] = df.close
 
         df = df[
-            ["b_high", "b_low", "b_close", "open", "high", "close", "low", "volume"]
+            ["open", "high", "close", "low"]
         ]
 
         return df
 
-    @classmethod
-    def price_history_stream(
-        cls, symbol: str, freq_range: tdargs.FreqRangeArgs,
-    ) -> t.Tuple[pd.DataFrame, t.Any]:
-        return (
-            cls.price_history(symbol=symbol, freq_range=freq_range),
-            datetime.timedelta(seconds=5),
+    def place_order_spec(self, order_spec) -> t.Tuple[int, str]:
+        """
+        place order with tda-api order spec, return order id and order status
+        """
+        self._client.place_order(account_id=self._account_id, order_spec=order_spec)
+        order_data = self.get_orders()[0]
+        return order_data["orderId"], order_data["status"]
+
+    def get_orders(self, status: OrderStatus = None, cached=False):
+        """
+        get all orders in the last X 59 days (limit is 60)
+        """
+        if cached is False or self._cached_orders is None:
+            self._cached_orders = self._client.get_orders_by_path(
+                account_id=self._account_id,
+                from_entered_datetime=datetime.datetime.utcnow()
+                - datetime.timedelta(days=59),
+                status=status,
+            ).json()
+        return self._cached_orders
+
+    def orders_by_id(self, status: OrderStatus = None, cached=False):
+        """returns orders where key is the order id"""
+        return parse_orders(self.get_orders(status=status, cached=cached))
+
+    def get_order_data(self, order_id, cached=False) -> OrderData:
+        """
+        get order status given order id
+        TODO call in debugger to get location of symbol name
+        """
+        order = self.orders_by_id(cached=cached)[order_id]
+        return OrderData(
+            name=order["orderLegCollection"][0]["instrument"]["symbol"],
+            direction=utils.Side(
+                order["orderLegCollection"][0]["instruction"]
+            ),
+            quantity=order["filledQuantity"],
+            stop_loss=None,
+            status=OrderStatus(order["status"]),
         )
 
-    @classmethod
-    def init_position(
-        cls, symbol, quantity, side, stop_value=None, data_row=None
-    ) -> Position:
-        return Position(symbol, quantity, side, stop_value=stop_value, data_row=None)
+    def init_position(self, symbol, quantity, side) -> Position:
+        return Position(symbol, quantity, side, data_row=None)
 
 
 class TdTickerStream(abstract_access.AbstractTickerStream):
-    def run_stream(self):
+    def __init__(
+            self,
+            broker_client: TdBrokerClient,
+            account_id,
+            stream_parser,
+            quote_file_path,
+            history_path,
+            fetch_price_data, interval
+    ):
+        super().__init__(stream_parser, quote_file_path, history_path, fetch_price_data, interval)
+        self._stream_client = tda.streaming.StreamClient(
+            client=broker_client,
+            account_id=account_id
+        )
+        self._current_quotes = {}
+
+    def run_stream(
+            self,
+            add_book_handler: t.Callable,
+            book_subs,
+            symbols
+    ):
+        """configure stream, create write subprocess, then run stream with handler piping data to write subprocesses"""
+        stream = configure_stream(self._stream_client, add_book_handler, book_subs, symbols)
+        send_conn = self._init_processes()
         asyncio.run(
-            self._stream(
-                [self.handle_stream, lambda msg: print(json.dumps(msg, indent=4))]
+            stream(
+                [
+                    lambda msg: self.handle_stream(msg, send_conn),
+                    lambda msg: print(json.dumps(msg, indent=4))
+                ]
             )
         )
+
+    def handle_stream(self, msg, send_conn):
+        symbol = self.__class__.get_symbol(msg)
+        self._stream_parsers[symbol].update_ohlc_state(msg)
+        ohlc_data = self._stream_parsers[symbol].get_ohlc()
+        if ohlc_data != self._current_quotes[symbol]:
+            self._current_quotes[symbol] = ohlc_data
+            send_conn.send(self._current_quotes)
 
     @staticmethod
     def get_symbol(msg) -> str:
