@@ -29,6 +29,82 @@ import tda_access.utils as utils
 
 OrderStatus = tda.client.Client.Order.Status
 
+# decode price history interval to appropriate function call
+
+
+def _handle_raw_price_history(resp, symbol) -> pd.DataFrame:
+    """
+    attempt to translate price history response to a dataframe
+    try to raise meaningful exception if there is an issue
+    """
+    try:
+        history = resp.json()
+    except json.decoder.JSONDecodeError:
+        raise utils.EmptyDataError
+
+    if history.get("candles", None) is None:
+        error = history.get("error", None)
+        if error is None and history.get("fault", None) is not None:
+            raise utils.FaultReceivedError(
+                f"tda responded with fault at {symbol}: {error}"
+            )
+        if error == "Not Found":
+            print(f"td api could not find symbol {symbol}")
+            raise utils.TickerNotFoundError(
+                f"td api could not find symbol {symbol}"
+            )
+        elif error is None:
+            raise Exception
+        else:
+            raise utils.EmptyDataError(
+                f"No data received for symbol {symbol}"
+            )
+
+    if history["empty"] is True:
+        raise utils.EmptyDataError(f"No data received for symbol {symbol}")
+
+    df = pd.DataFrame(history["candles"])
+
+    # datetime given in ms, convert to readable date
+    df.datetime = pd.to_datetime(df.datetime, unit="ms")
+
+    # rename datetime to time for finplot compatibility
+    df = df.rename(columns={"datetime": "time"})
+    df.index = df.time
+
+    df = df[
+        ["open", "high", "close", "low"]
+    ]
+
+    return df
+
+
+def easy_get_price_history(client, symbol: str, interval: int):
+    """
+    Note: must be pure function otherwise subprocess will error out
+    get price history with simplified inputs, max data retrieved if no start/end specified
+    :param client:
+    :param symbol: ticker symbol
+    :param interval: minute interval: 1, 5, 10, 15, 30
+    :return:
+    """
+    price_interval_lookup = {
+        1: client.get_price_history_every_minute,
+        5: client.get_price_history_every_five_minutes,
+        10: client.get_price_history_every_ten_minutes,
+        15: client.get_price_history_every_fifteen_minutes,
+        30: client.get_price_history_every_thirty_minutes,
+        # '1d': self._client.get_price_history_every_day,
+        # '1w': self._client.get_price_history_every_week,
+    }
+
+    try:
+        # not sure why argument is unexpected
+        resp = price_interval_lookup[interval](symbol)
+    except OAuthError:
+        raise utils.EmptyDataError
+    return _handle_raw_price_history(resp, symbol)
+
 
 def parse_orders(orders: t.List[t.Dict]) -> t.Dict[int, t.Dict]:
     return {order["orderId"]: order for order in orders}
@@ -485,6 +561,12 @@ class AccountInfo:
 #         return Position(symbol, quantity, side, stop_value=stop_value, data_row=None)
 
 
+def hof_init_td_client(credentials):
+    def _init_td_client():
+        return TdBrokerClient(credentials)
+    return _init_td_client
+
+
 class TdBrokerAccount(abstract_access.AbstractBrokerAccount):
     pass
 
@@ -502,7 +584,7 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
     def _get_broker_client(credentials) -> tda.client.Client:
         return tda.auth.easy_client(
             webdriver_func=selenium.webdriver.Firefox,
-            **credentials.CLIENT_PARAMS
+            **credentials
         )
 
     def account_info(self, *args, **kwargs) -> t.Type[TdBrokerAccount]:
@@ -531,46 +613,16 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
         except OAuthError:
             raise utils.EmptyDataError
 
-        try:
-            history = resp.json()
-        except json.decoder.JSONDecodeError:
-            raise utils.EmptyDataError
+        return _handle_raw_price_history(resp, symbol)
 
-        if history.get("candles", None) is None:
-            error = history.get("error", None)
-            if error is None and history.get("fault", None) is not None:
-                raise utils.FaultReceivedError(
-                    f"tda responded with fault at {symbol}: {error}"
-                )
-            if error == "Not Found":
-                print(f"td api could not find symbol {symbol}")
-                raise utils.TickerNotFoundError(
-                    f"td api could not find symbol {symbol}"
-                )
-            elif error is None:
-                raise Exception
-            else:
-                raise utils.EmptyDataError(
-                    f"No data received for symbol {symbol}"
-                )
-
-        if history["empty"] is True:
-            raise utils.EmptyDataError(f"No data received for symbol {symbol}")
-
-        df = pd.DataFrame(history["candles"])
-
-        # datetime given in ms, convert to readable date
-        df.datetime = pd.to_datetime(df.datetime, unit="ms")
-
-        # rename datetime to time for finplot compatibility
-        df = df.rename(columns={"datetime": "time"})
-        df.index = df.time
-
-        df = df[
-            ["open", "high", "close", "low"]
-        ]
-
-        return df
+    def easy_get_price_history(self, symbol: str, interval: int):
+        """
+        get price history with simplified inputs, max data retrieved if no start/end specified
+        :param symbol: ticker symbol
+        :param interval: minute interval: 1, 5, 10, 15, 30
+        :return:
+        """
+        return easy_get_price_history(self.client, symbol, interval)
 
     def place_order_spec(self, order_spec) -> t.Tuple[int, str]:
         """
@@ -616,32 +668,77 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
     def init_position(self, symbol, quantity, side) -> Position:
         return Position(symbol, quantity, side, data_row=None)
 
+    def init_stream(
+            self,
+            live_quote_fp: str,
+            price_history_fp: str,
+            interval: int,
+            fetch_price_data: t.Optional[abstract_access.DATA_FETCH_FUNCTION] = None
+    ) -> TdTickerStream:
+        """
+        Initialize a ticker stream object
+        :param live_quote_fp: file path to write json file containing live quotes
+        :param price_history_fp: file path to write OHLC data to csv by given interval
+                                up to the most recent close time
+        :param interval: minute interval to write OHLC data to price_history_fp
+                        1, 5, 10, 15, 30
+        :param fetch_price_data: option to get price history
+        :return:
+        """
+        if fetch_price_data is None:
+            fetch_price_data = easy_get_price_history
+
+        return TdTickerStream(
+            self.client,
+            account_id=self._account_id,
+            stream_parser=TdStreamParser,
+            quote_file_path=live_quote_fp,
+            history_path=price_history_fp,
+            fetch_price_data=fetch_price_data,
+            interval=interval
+        )
+
 
 class TdTickerStream(abstract_access.AbstractTickerStream):
     def __init__(
             self,
-            broker_client: TdBrokerClient,
+            broker_client,
             account_id,
             stream_parser,
             quote_file_path,
             history_path,
-            fetch_price_data, interval
+            fetch_price_data: abstract_access.DATA_FETCH_FUNCTION,
+            interval
     ):
         super().__init__(stream_parser, quote_file_path, history_path, fetch_price_data, interval)
-        self._stream_client = tda.streaming.StreamClient(
-            client=broker_client,
-            account_id=account_id
-        )
+        self._account_id = account_id
         self._current_quotes = {}
+        self._broker_client = broker_client
 
-    def run_stream(
-            self,
-            add_book_handler: t.Callable,
-            book_subs,
-            symbols
-    ):
+    def run_stream(self, symbols: t.List[str]):
         """configure stream, create write subprocess, then run stream with handler piping data to write subprocesses"""
-        stream = configure_stream(self._stream_client, add_book_handler, book_subs, symbols)
+        _stream_client = tda.streaming.StreamClient(
+            client=self._broker_client,
+            account_id=self._account_id
+        )
+        stream = configure_stream(
+            _stream_client,
+            add_book_handler=_stream_client.add_chart_equity_handler,
+            book_subs=_stream_client.chart_equity_subs,
+            symbols=symbols
+        )
+        # TODO clean up stream parser init inputs, not very good looking
+        self._init_stream_parsers(
+            *[
+                (
+                    symbol,
+                    None,
+                    {'client': self._broker_client, 'symbol': symbol, 'interval': self._interval}
+                )
+                for symbol in symbols
+            ]
+        )
+        self._current_quotes = {symbol: None for symbol in symbols}
         send_conn = self._init_processes()
         asyncio.run(
             stream(
@@ -653,19 +750,24 @@ class TdTickerStream(abstract_access.AbstractTickerStream):
         )
 
     def handle_stream(self, msg, send_conn):
-        symbol = self.__class__.get_symbol(msg)
-        self._stream_parsers[symbol].update_ohlc_state(msg)
-        ohlc_data = self._stream_parsers[symbol].get_ohlc()
-        if ohlc_data != self._current_quotes[symbol]:
-            self._current_quotes[symbol] = ohlc_data
-            send_conn.send(self._current_quotes)
+        parsed_data = self.__class__.get_symbol(msg)
+        for symbol, data in parsed_data.items():
+            self._stream_parsers[symbol].update_ohlc_state(data)
+            ohlc_data = self._stream_parsers[symbol].get_ohlc()
+            if ohlc_data != self._current_quotes[symbol]:
+                self._current_quotes[symbol] = ohlc_data
+                send_conn.send(self._current_quotes)
 
     @staticmethod
-    def get_symbol(msg) -> str:
-        return msg["key"]
+    def get_symbol(msg) -> t.Dict[str, t.Dict]:
+        return {content['key']: content for content in msg['content']}
 
 
 class TdStreamParser(abstract_access.AbstractStreamParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.position = None
+
     def retrieve_ohlc(self, data: dict):
         """get prices from ticker stream, expects content to be passed in"""
         return (
