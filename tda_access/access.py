@@ -673,7 +673,9 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
             live_quote_fp: str,
             price_history_fp: str,
             interval: int,
-            fetch_price_data: t.Optional[abstract_access.DATA_FETCH_FUNCTION] = None
+            # fetch_data_params: t.Optional[t.Dict] = None,
+            # fetch_price_data: t.Optional[abstract_access.DATA_FETCH_FUNCTION] = None,
+
     ) -> TdTickerStream:
         """
         Initialize a ticker stream object
@@ -682,19 +684,15 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
                                 up to the most recent close time
         :param interval: minute interval to write OHLC data to price_history_fp
                         1, 5, 10, 15, 30
-        :param fetch_price_data: option to get price history
         :return:
         """
-        if fetch_price_data is None:
-            fetch_price_data = easy_get_price_history
-
         return TdTickerStream(
             self.client,
             account_id=self._account_id,
             stream_parser=TdStreamParser,
             quote_file_path=live_quote_fp,
             history_path=price_history_fp,
-            fetch_price_data=fetch_price_data,
+            fetch_price_data=self.easy_get_price_history,
             interval=interval
         )
 
@@ -715,7 +713,7 @@ class TdTickerStream(abstract_access.AbstractTickerStream):
         self._current_quotes = {}
         self._broker_client = broker_client
 
-    def run_stream(self, symbols: t.List[str]):
+    def run_stream(self, writer_send_conn, symbols: t.List[str]):
         """configure stream, create write subprocess, then run stream with handler piping data to write subprocesses"""
         _stream_client = tda.streaming.StreamClient(
             client=self._broker_client,
@@ -727,36 +725,37 @@ class TdTickerStream(abstract_access.AbstractTickerStream):
             book_subs=_stream_client.chart_equity_subs,
             symbols=symbols
         )
-        # TODO clean up stream parser init inputs, not very good looking
-        self._init_stream_parsers(
-            *[
-                (
-                    symbol,
-                    None,
-                    {'client': self._broker_client, 'symbol': symbol, 'interval': self._interval}
-                )
-                for symbol in symbols
-            ]
-        )
         self._current_quotes = {symbol: None for symbol in symbols}
-        send_conn = self._init_processes()
+        data_send_conn = self._init_processes(writer_send_conn)
+        stream_start = datetime.datetime.utcnow()
+        self._init_stream_parsers(symbols, stream_start)
+        fetch_time = self.get_fetch_time(stream_start, None)
+        last = datetime.datetime.utcnow()
+        while (now := datetime.datetime.utcnow()) < fetch_time:
+            if now > last + datetime.timedelta(seconds=1):
+                print(f'Waiting: {fetch_time - now}', end='\r')
+                last = now
+        history_data = self.get_all_symbol_data(symbols, self._interval)
+        history_data.to_csv(self._history_path)
+        print('streaming start')
         asyncio.run(
             stream(
                 [
-                    lambda msg: self.handle_stream(msg, send_conn),
-                    lambda msg: print(json.dumps(msg, indent=4))
+                    lambda msg: self.handle_stream(msg, data_send_conn),
+                    # lambda msg: print(json.dumps(msg, indent=4))
                 ]
             )
         )
 
     def handle_stream(self, msg, send_conn):
         parsed_data = self.__class__.get_symbol(msg)
+        time_stamp = datetime.datetime.utcnow()
         for symbol, data in parsed_data.items():
-            self._stream_parsers[symbol].update_ohlc_state(data)
-            ohlc_data = self._stream_parsers[symbol].get_ohlc()
+            ohlc_data = self._stream_parsers[symbol].update_ohlc(data, time_stamp)
             if ohlc_data != self._current_quotes[symbol]:
                 self._current_quotes[symbol] = ohlc_data
-                send_conn.send(self._current_quotes)
+        if len(self._current_quotes) > 0:
+            send_conn.send(self._current_quotes)
 
     @staticmethod
     def get_symbol(msg) -> t.Dict[str, t.Dict]:
@@ -766,7 +765,6 @@ class TdTickerStream(abstract_access.AbstractTickerStream):
 class TdStreamParser(abstract_access.AbstractStreamParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.position = None
 
     def retrieve_ohlc(self, data: dict):
         """get prices from ticker stream, expects content to be passed in"""
