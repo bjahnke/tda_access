@@ -568,7 +568,20 @@ def hof_init_td_client(credentials):
 
 
 class TdBrokerAccount(abstract_access.AbstractBrokerAccount):
-    pass
+    def __init__(self, account_client):
+        self._account_client = account_client
+
+    @property
+    def positions(self) -> t.Dict[str, t.Type[AbstractPosition]]:
+        pass
+
+    @property
+    def equity(self):
+        pass
+
+    def get_symbols(self) -> t.List[str]:
+        pass
+
 
 
 class TdBrokerClient(abstract_access.AbstractBrokerClient):
@@ -588,7 +601,12 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
         )
 
     def account_info(self, *args, **kwargs) -> t.Type[TdBrokerAccount]:
-        pass
+        account_info = self.client.get_account(self._account_id, fields=tda.client.Client.Account.Fields.POSITIONS)
+        return account_info
+
+    def get_transactions(self):
+        """todo add to AbstractBrokerClient as abstract method"""
+        return self.client.get_transactions(self._account_id)
 
     def price_history(self, symbol, freq_range: tdargs.FreqRangeArgs) -> pd.DataFrame:
         """

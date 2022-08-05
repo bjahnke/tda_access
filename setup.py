@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='tda_access',
-    version='',
+    version='0.0.1',
     packages=['tda_access'],
     url='',
     license='',
