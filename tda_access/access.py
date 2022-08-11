@@ -600,7 +600,7 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
             **credentials
         )
 
-    def account_info(self, *args, **kwargs) -> t.Type[TdBrokerAccount]:
+    def account_info(self, *args, **kwargs):
         account_info = self.client.get_account(self._account_id, fields=tda.client.Client.Account.Fields.POSITIONS)
         return account_info
 
