@@ -12,19 +12,15 @@ import datetime
 import authlib
 from authlib.integrations.base_client import OAuthError
 from tda.orders.common import OrderType, Duration, Session
-# from tda.orders.generic import OrderBuilder
 import abstract_broker.abstract as abstract_access
-# import credentials
 import tda
 import selenium.webdriver
 import pandas as pd
 import tda_access.tdargs as tdargs
 from dataclasses import dataclass, field
 import typing as t
-
 import tda.orders.equities as toe
 import json
-
 import tda_access.utils as utils
 
 OrderStatus = tda.client.Client.Order.Status
@@ -36,6 +32,10 @@ def _handle_raw_price_history(resp, symbol) -> pd.DataFrame:
     """
     attempt to translate price history response to a dataframe
     try to raise meaningful exception if there is an issue
+
+    :param resp: a raw html response
+    :param symbol: equity symbol
+    :return:
     """
     try:
         history = resp.json()
@@ -79,23 +79,25 @@ def _handle_raw_price_history(resp, symbol) -> pd.DataFrame:
     return df
 
 
-def easy_get_price_history(client, symbol: str, interval: int):
+def easy_get_price_history(client, symbol: str, interval: int, interval_type: str):
     """
     Note: must be pure function otherwise subprocess will error out
     get price history with simplified inputs, max data retrieved if no start/end specified
+
     :param client:
     :param symbol: ticker symbol
     :param interval: minute interval: 1, 5, 10, 15, 30
     :return:
     """
+    interval = f'{interval}{interval_type}'
     price_interval_lookup = {
-        1: client.get_price_history_every_minute,
-        5: client.get_price_history_every_five_minutes,
-        10: client.get_price_history_every_ten_minutes,
-        15: client.get_price_history_every_fifteen_minutes,
-        30: client.get_price_history_every_thirty_minutes,
-        # '1d': self._client.get_price_history_every_day,
-        # '1w': self._client.get_price_history_every_week,
+        '1m': client.get_price_history_every_minute,
+        '5m': client.get_price_history_every_five_minutes,
+        '10m': client.get_price_history_every_ten_minutes,
+        '15m': client.get_price_history_every_fifteen_minutes,
+        '30m': client.get_price_history_every_thirty_minutes,
+        '1d': self._client.get_price_history_every_day,
+        '1w': self._client.get_price_history_every_week,
     }
 
     try:
@@ -117,11 +119,13 @@ def configure_stream(
     symbols: t.List[str],
 ):
     """
-    :param stream_client:
-    :param add_book_handler:
-    :param book_subs:
-    :param symbols:
-    :return:
+    Configure an async function that will handle incoming messages
+    base on the input args given.
+
+    :param stream_client: td stream client initialized with credentials
+    :param add_book_handler: callback specifying how to handle the messages
+    :param book_subs: books subs which determine the type of data that is streamed
+    :param symbols: equity symbols to stream
     """
 
     async def _initiate_stream(handlers: t.List[t.Callable[[t.Dict], None]]):
@@ -310,256 +314,6 @@ class AccountInfo:
     def get_symbols(self) -> t.List:
         return [symbol for symbol, _ in self._positions.items()]
 
-    # def _parse_order_statuses(self) -> t.Dict[int, t.Dict]:
-    #     """for convenient lookup of order status"""
-    #     raw_orders = self.acct_data_raw['securitiesAccount']['orderStrategies']
-    #     return parse_orders(raw_orders)
-
-
-# class _LocalClientMeta(type):
-#     _cached_account_info: t.Union[None, AccountInfo] = None
-#     _cached_orders: t.List[t.Dict] = None
-#
-#     TDA_CLIENT: tda.client.Client = tda.auth.easy_client(
-#         webdriver_func=selenium.webdriver.Firefox, **credentials.CLIENT_PARAMS
-#     )
-#     STREAM_CLIENT: tda.streaming.StreamClient = tda.streaming.StreamClient(
-#         client=TDA_CLIENT, account_id=_ACCOUNT_ID
-#     )
-#
-#     _stream_data = []
-#
-#     def account_info(cls, cached=False) -> AccountInfo:
-#         if cached is False or cls._cached_account_info is None:
-#
-#             # dump account data to txt for reference
-#             while True:
-#                 try:
-#                     resp = LocalClient.TDA_CLIENT.get_account(
-#                         account_id=_ACCOUNT_ID,
-#                         fields=[
-#                             tda.client.Client.Account.Fields.ORDERS,
-#                             tda.client.Client.Account.Fields.POSITIONS,
-#                         ],
-#                     )
-#                 except authlib.integrations.base_client.errors.OAuthError as e:
-#                     print(e)
-#                     continue
-#
-#                 account_info_raw = resp.json()
-#                 try:
-#                     cls._cached_account_info = AccountInfo(account_info_raw)
-#                 except (KeyError, json.decoder.JSONDecodeError):
-#                     pass
-#                 else:
-#                     with open("account_data.json", "w") as outfile:
-#                         json.dump(account_info_raw, outfile, indent=4)
-#                     break
-#         return cls._cached_account_info
-#
-#     def orders(cls, status: OrderStatus = None, cached=False):
-#         if cached is False or cls._cached_orders is None:
-#             cls._cached_orders = cls.TDA_CLIENT.get_orders_by_path(
-#                 account_id=_ACCOUNT_ID,
-#                 from_entered_datetime=datetime.datetime.utcnow()
-#                 - datetime.timedelta(days=59),
-#                 status=status,
-#             ).json()
-#         return cls._cached_orders
-#
-#     def orders_by_id(cls, status: OrderStatus = None, cached=False):
-#         """returns orders where key is the order id"""
-#         return parse_orders(cls.orders(status=status, cached=cached))
-#
-#     def get_order_data(cls, order_id, cached=False) -> OrderData:
-#         """TODO call in debugger to get location of symbol name"""
-#         order = cls.orders_by_id(cached=cached)[order_id]
-#         return OrderData(
-#             name=order["orderLegCollection"][0]["instrument"]["symbol"],
-#             direction=utils.Side(
-#                 order["orderLegCollection"][0]["instruction"]
-#             ),
-#             quantity=order["filledQuantity"],
-#             stop_loss=None,
-#             status=OrderStatus(order["status"]),
-#         )
-#
-#     def get_queued_stop_order(
-#         cls, symbol: str
-#     ) -> t.Union[t.Tuple[OrderData, int], t.Tuple[None, None]]:
-#         """"""
-#         orders = cls.orders()
-#         stop_order_data = None
-#         stop_order_id = None
-#         for order in orders:
-#             order_leg_collection = order["orderLegCollection"][0]
-#             if (
-#                 order_leg_collection["instrument"]["symbol"] == symbol
-#                 and order["orderType"] == "STOP"
-#                 and order_leg_collection["positionEffect"] == "CLOSING"
-#                 and order["status"] == "QUEUED"
-#             ):
-#                 # direction should match the OPEN position direction
-#                 direction = utils.Side.LONG
-#                 if order_leg_collection["instruction"] == "BUY_TO_COVER":
-#                     direction = utils.Side.SHORT
-#
-#                 stop_order_data = OrderData(
-#                     name=symbol,
-#                     direction=direction,
-#                     quantity=order["quantity"],
-#                     stop_loss=order["stopPrice"],
-#                 )
-#                 stop_order_id = order["orderId"]
-#                 break
-#         return stop_order_data, stop_order_id
-#
-#     def place_order_spec(cls, order_spec) -> t.Tuple[int, str]:
-#         """place order with tda-api order spec, return order id"""
-#         cls.TDA_CLIENT.place_order(account_id=_ACCOUNT_ID, order_spec=order_spec)
-#         order_data = cls.orders()[0]
-#         return order_data["orderId"], order_data["status"]
-#
-#     def init_equity_stream(cls, symbols: t.List[str]):
-#         """
-#         stream price data of the given symbols every 500ms
-#         use this code to execute function: asyncio.run(LocalClient.initiate_stream(<enter symbols here>)
-#         """
-#         return configure_stream(
-#             stream_client=cls.STREAM_CLIENT,
-#             add_book_handler=cls.STREAM_CLIENT.add_chart_equity_handler,
-#             symbols=symbols,
-#             book_subs=cls.STREAM_CLIENT.chart_equity_subs,
-#         )
-#
-#     def init_futures_stream(cls, symbols: t.List[str]) -> t.Callable:
-#         # TODO add handler converting stream to ohlc bars + writes to csv
-#         return configure_stream(
-#             stream_client=cls.STREAM_CLIENT,
-#             add_book_handler=cls.STREAM_CLIENT.add_chart_futures_handler,
-#             symbols=symbols,
-#             book_subs=cls.STREAM_CLIENT.chart_futures_subs,
-#         )
-#
-#     def market_is_open(cls, market_type: tda.client.Client.Markets) -> bool:
-#         """
-#         TODO move to MarketData class
-#         """
-#         resp = cls.TDA_CLIENT.get_hours_for_single_market(
-#             market_type, datetime.datetime.now()
-#         )
-#         resp = resp.json()
-#         return resp["equity"]["EQ"]["isOpen"]
-#
-#     def market_was_open(
-#         cls, market_type: tda.client.Client.Markets, time_ago: datetime.timedelta
-#     ):
-#         resp = cls.TDA_CLIENT.get_hours_for_single_market(
-#             market_type, datetime.datetime.now()
-#         )
-#         resp = resp.json()
-#         market_end = resp["equity"]["EQ"]["sessionHours"]["regularMarket"][0]["end"][
-#             :-6
-#         ]
-#         market_end = datetime.datetime.strptime(market_end, "%Y-%m-%dT%H:%M:%S")
-#         return datetime.datetime.now() - market_end <= time_ago
-#
-#     def cancel_order(cls, order_id: int):
-#         cls.TDA_CLIENT.cancel_order(order_id=order_id, account_id=_ACCOUNT_ID)
-
-
-# # create td client
-# class LocalClient(metaclass=_LocalClientMeta):
-#     OrderStatus = tda.client.Client.Order.Status
-#     cached_account_info: AccountInfo = None
-#
-#     @classmethod
-#     def price_history(
-#         cls, symbol: str, freq_range: tdargs.FreqRangeArgs,
-#     ) -> pd.DataFrame:
-#         """
-#         :param symbol:
-#         :param freq_range:
-#         :return:
-#         """
-#         # get historical data, store as dataframe, convert datetime (ms) to y-m-d-etc
-#         try:
-#             resp = cls.TDA_CLIENT.get_price_history(
-#                 symbol,
-#                 period_type=freq_range.range.period.type,
-#                 period=freq_range.range.period.val,
-#                 frequency_type=freq_range.freq.type,
-#                 frequency=freq_range.freq.val,
-#                 start_datetime=freq_range.range.start,
-#                 end_datetime=freq_range.range.end,
-#                 need_extended_hours_data=False,
-#             )
-#         except OAuthError:
-#             raise utils.EmptyDataError
-#
-#         try:
-#             history = resp.json()
-#         except json.decoder.JSONDecodeError:
-#             raise utils.EmptyDataError
-#
-#         if history.get("candles", None) is None:
-#             error = history.get("error", None)
-#             if error is None and history.get("fault", None) is not None:
-#                 raise utils.FaultReceivedError(
-#                     f"tda responded with fault at {symbol}: {error}"
-#                 )
-#             if error == "Not Found":
-#                 print(f"td api could not find symbol {symbol}")
-#                 raise utils.TickerNotFoundError(
-#                     f"td api could not find symbol {symbol}"
-#                 )
-#             elif error is None:
-#                 raise Exception
-#             else:
-#                 raise utils.EmptyDataError(
-#                     f"No data received for symbol {symbol}"
-#                 )
-#
-#         df = pd.DataFrame(history["candles"])
-#
-#         if history["empty"] is True:
-#             raise utils.EmptyDataError(f"No data received for symbol {symbol}")
-#
-#         # datetime given in ms, convert to readable date
-#         df.datetime = pd.to_datetime(df.datetime, unit="ms")
-#
-#         # for truncating to date only (not hours/minutes/seconds)
-#         # df.datetime = df.datetime.dt.date
-#
-#         # rename datetime to time for finplot compatibility
-#         df = df.rename(columns={"datetime": "time"})
-#         df.index = df.time
-#         # drop columns other than those mentioned (maybe want to save volume)
-#         df["b_high"] = df.high
-#         df["b_low"] = df.low
-#         df["b_close"] = df.close
-#
-#         df = df[
-#             ["b_high", "b_low", "b_close", "open", "high", "close", "low", "volume"]
-#         ]
-#
-#         return df
-#
-#     @classmethod
-#     def price_history_stream(
-#         cls, symbol: str, freq_range: tdargs.FreqRangeArgs,
-#     ) -> t.Tuple[pd.DataFrame, t.Any]:
-#         return (
-#             cls.price_history(symbol=symbol, freq_range=freq_range),
-#             datetime.timedelta(seconds=5),
-#         )
-#
-#     @classmethod
-#     def init_position(
-#         cls, symbol, quantity, side, stop_value=None, data_row=None
-#     ) -> Position:
-#         return Position(symbol, quantity, side, stop_value=stop_value, data_row=None)
-
 
 def hof_init_td_client(credentials):
     def _init_td_client():
@@ -568,6 +322,9 @@ def hof_init_td_client(credentials):
 
 
 class TdBrokerAccount(abstract_access.AbstractBrokerAccount):
+    """
+    TODO is this class needed?
+    """
     def __init__(self, account_client):
         self._account_client = account_client
 
@@ -583,8 +340,11 @@ class TdBrokerAccount(abstract_access.AbstractBrokerAccount):
         pass
 
 
-
 class TdBrokerClient(abstract_access.AbstractBrokerClient):
+    """
+    Utilizes the AbstractBrokerClient Interface as a middle layer
+    to interacted with TD-API in an abstract way.
+    """
     _client: tda.client.Client
 
     def __init__(self, credentials: t.Dict):
@@ -595,6 +355,12 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
 
     @staticmethod
     def _get_broker_client(credentials) -> tda.client.Client:
+        """
+        Used to initialize the td-client. Initialization occures
+        in super.__init__()
+        :param credentials: login credentials for td client
+        :return: TD client instance
+        """
         return tda.auth.easy_client(
             webdriver_func=selenium.webdriver.Firefox,
             **credentials
@@ -608,8 +374,10 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
         """todo add to AbstractBrokerClient as abstract method"""
         return self.client.get_transactions(self._account_id)
 
-    def price_history(self, symbol, freq_range: tdargs.FreqRangeArgs) -> pd.DataFrame:
+    def price_history(self, symbol, freq_range) -> pd.DataFrame:
         """
+        NOTE: Deprecated, use easy_get_price_history
+
         attempt to get price history, catch and raise meaningful exceptions
         when specific issues arise
         :param symbol:
@@ -633,18 +401,32 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
 
         return _handle_raw_price_history(resp, symbol)
 
-    def easy_get_price_history(self, symbol: str, interval: int):
+    def easy_get_price_history(self, symbol: str, interval: int, interval_type: str):
         """
         get price history with simplified inputs, max data retrieved if no start/end specified
         :param symbol: ticker symbol
         :param interval: minute interval: 1, 5, 10, 15, 30
         :return:
         """
-        return easy_get_price_history(self.client, symbol, interval)
+        return easy_get_price_history(self.client, symbol, interval, interval_type)
+
+    def download_price_history(self, interval, symbols: t.List[str], interval_type):
+        """
+
+        :param interval:
+        :param symbols:
+        :param interval_type:
+        :return:
+        """
+
+        for symbol in symbols:
+            self.easy_get_price_history(symbol, interval, interval_type)
 
     def place_order_spec(self, order_spec) -> t.Tuple[int, str]:
         """
-        place order with tda-api order spec, return order id and order status
+        Instruct TD-Broker to execute the given order_spec
+        :param order_spec:
+        :return:
         """
         self._client.place_order(account_id=self._account_id, order_spec=order_spec)
         order_data = self.get_orders()[0]
@@ -653,6 +435,9 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
     def get_orders(self, status: OrderStatus = None, cached=False):
         """
         get all orders in the last X 59 days (limit is 60)
+        :param status: only retrieve orders with the given status
+        :param cached: if true, don't hit the api, only order data cached locally
+        :return:
         """
         if cached is False or self._cached_orders is None:
             self._cached_orders = self._client.get_orders_by_path(
