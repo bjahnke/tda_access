@@ -79,7 +79,7 @@ def _handle_raw_price_history(resp, symbol) -> pd.DataFrame:
     return df
 
 
-def easy_get_price_history(client, symbol: str, interval: int, interval_type: str):
+def easy_get_price_history(client, symbol: str, interval: int, interval_type: str, start=None, end=None):
     """
     Note: must be pure function otherwise subprocess will error out
     get price history with simplified inputs, max data retrieved if no start/end specified
@@ -89,20 +89,19 @@ def easy_get_price_history(client, symbol: str, interval: int, interval_type: st
     :param interval: minute interval: 1, 5, 10, 15, 30
     :return:
     """
-    interval = f'{interval}{interval_type}'
-    price_interval_lookup = {
+    __price_interval_lookup = {
         '1m': client.get_price_history_every_minute,
         '5m': client.get_price_history_every_five_minutes,
         '10m': client.get_price_history_every_ten_minutes,
         '15m': client.get_price_history_every_fifteen_minutes,
         '30m': client.get_price_history_every_thirty_minutes,
-        '1d': self._client.get_price_history_every_day,
-        '1w': self._client.get_price_history_every_week,
+        '1d': client.get_price_history_every_day,
+        '1w': client.get_price_history_every_week,
     }
-
+    interval = f'{interval}{interval_type}'
     try:
         # not sure why argument is unexpected
-        resp = price_interval_lookup[interval](symbol)
+        resp = __price_interval_lookup[interval](symbol, start_datetime=start, end_datetime=end)
     except OAuthError:
         raise utils.EmptyDataError
     return _handle_raw_price_history(resp, symbol)
@@ -325,11 +324,26 @@ class TdBrokerAccount(abstract_access.AbstractBrokerAccount):
     """
     TODO is this class needed?
     """
-    def __init__(self, account_client):
-        self._account_client = account_client
+    def __init__(self, account_data):
+        self._account_data = account_data
 
     @property
-    def positions(self) -> t.Dict[str, t.Type[AbstractPosition]]:
+    def account_data(self):
+        return self._account_data
+
+    def get_position_table(self) -> pd.DataFrame:
+        """
+        Compose a position table from account data dict
+        :return:
+        """
+        pos = pd.DataFrame.from_dict(self._account_data['securitiesAccount']['positions'])
+        pos_id = pd.DataFrame(list(pos['instrument']))
+        pos['quantity'] = pos['longQuantity'] - pos['shortQuantity']
+        pos = pos.join(pos_id).drop(columns=['instrument'])
+        return pos
+
+    @property
+    def positions(self):
         pass
 
     @property
@@ -353,6 +367,12 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
         super().__init__(self._client_credentials)
         self._cached_orders = None
 
+    @classmethod
+    def init_from_json(cls, path):
+        with open(path) as fp:
+            creds = json.load(fp)
+        return cls(creds['credentials'])
+
     @staticmethod
     def _get_broker_client(credentials) -> tda.client.Client:
         """
@@ -367,50 +387,36 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
         )
 
     def account_info(self, *args, **kwargs):
-        account_info = self.client.get_account(self._account_id, fields=tda.client.Client.Account.Fields.POSITIONS)
-        return account_info
+        account_info = self.client.get_account(
+            self._account_id,
+            fields=tda.client.Client.Account.Fields.POSITIONS
+        ).json()
+        return TdBrokerAccount(account_info)
 
     def get_transactions(self):
         """todo add to AbstractBrokerClient as abstract method"""
         return self.client.get_transactions(self._account_id)
 
-    def price_history(self, symbol, freq_range) -> pd.DataFrame:
+    def price_history(self, symbol, interval, interval_type, start=None, end=None) -> pd.DataFrame:
         """
-        NOTE: Deprecated, use easy_get_price_history
-
         attempt to get price history, catch and raise meaningful exceptions
         when specific issues arise
         :param symbol:
         :param freq_range:
         :return:
         """
-        # get historical data, store as dataframe, convert datetime (ms) to y-m-d-etc
-        try:
-            resp = self._client.get_price_history(
-                symbol,
-                period_type=freq_range.range.period.type,
-                period=freq_range.range.period.val,
-                frequency_type=freq_range.freq.type,
-                frequency=freq_range.freq.val,
-                start_datetime=freq_range.range.start,
-                end_datetime=freq_range.range.end,
-                need_extended_hours_data=False,
-            )
-        except OAuthError:
-            raise utils.EmptyDataError
+        return easy_get_price_history(self.client, symbol, interval, interval_type, start, end).reset_index()
 
-        return _handle_raw_price_history(resp, symbol)
-
-    def easy_get_price_history(self, symbol: str, interval: int, interval_type: str):
+    def easy_get_price_history(self, symbol: str, interval: int, interval_type: str, start=None, end=None):
         """
         get price history with simplified inputs, max data retrieved if no start/end specified
         :param symbol: ticker symbol
         :param interval: minute interval: 1, 5, 10, 15, 30
         :return:
         """
-        return easy_get_price_history(self.client, symbol, interval, interval_type)
+        return easy_get_price_history(self.client, symbol, interval, interval_type, start, end)
 
-    def download_price_history(self, interval, symbols: t.List[str], interval_type):
+    def download_price_history(self, symbols: t.List[str], interval, interval_type, start=None, end=None):
         """
 
         :param interval:
@@ -418,9 +424,8 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
         :param interval_type:
         :return:
         """
-
-        for symbol in symbols:
-            self.easy_get_price_history(symbol, interval, interval_type)
+        dfs_merged = super().download_price_history(symbols, interval, interval_type, start=start, end=end).reset_index()
+        return dfs_merged
 
     def place_order_spec(self, order_spec) -> t.Tuple[int, str]:
         """
