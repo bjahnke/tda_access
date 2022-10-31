@@ -101,7 +101,10 @@ def easy_get_price_history(client, symbol: str, interval: int, interval_type: st
     interval = f'{interval}{interval_type}'
     try:
         # not sure why argument is unexpected
-        resp = __price_interval_lookup[interval](symbol, start_datetime=start, end_datetime=end)
+        while True:
+            resp = __price_interval_lookup[interval](symbol, start_datetime=start, end_datetime=end)
+            if resp.status_code != 429:
+                break
     except OAuthError:
         raise utils.EmptyDataError
     return _handle_raw_price_history(resp, symbol)
@@ -347,8 +350,8 @@ class TdBrokerAccount(abstract_access.AbstractBrokerAccount):
         pass
 
     @property
-    def equity(self):
-        pass
+    def equity(self) -> float:
+        return self._account_data['securitiesAccount']['currentBalances']['equity']
 
     def get_symbols(self) -> t.List[str]:
         pass
