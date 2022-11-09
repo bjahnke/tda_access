@@ -3,14 +3,16 @@ import json
 import tda_access.access as taa
 import multiprocessing as mp
 from time import perf_counter
+import typing as t
 
 
-def stream_app(credentials, paths, send_conn):
+def stream_app(credentials, stream_settings: t.Dict, send_conn):
     _client = taa.TdBrokerClient(credentials=credentials)
     _stream = _client.init_stream(
-        live_quote_fp=paths['live_quote_path'],
-        price_history_fp=paths['price_history_path'],
+        live_quote_fp=stream_settings['live_quote_path'],
+        price_history_fp=stream_settings['price_history_path'],
         interval=1,
+        interval_type='d'
     )
 
     _stream.run_stream(send_conn, symbols=['AAPL', 'GOOGL', 'ABBV', 'AMZN', 'NFLX'])
@@ -53,12 +55,15 @@ Json Structure
 """
 
 if __name__ == '__main__':
-    with open('credentials.json', 'r') as cred_file:
-        _inputs = json.load(cred_file)
+    with open('..\\..\\..\\data_args\\credentials.json', 'r') as cred_file:
+        _creds = json.load(cred_file)['credentials']
+
+    with open('..\\..\\..\\data_args\\scan_args.json', 'r') as fp:
+        _stream_settings = json.load(fp)['stream_settings']
 
     _receive_conn, _send_conn = mp.Pipe(duplex=True)
-    _stream_process = mp.Process(target=stream_app, args=(_inputs['credentials'], _inputs['paths'], _send_conn,))
+    _stream_process = mp.Process(target=stream_app, args=(_creds, _stream_settings, _send_conn,))
     _stream_process.start()
 
-    read_process(_inputs['paths']['price_history_path'], _receive_conn)
+    read_process(_stream_settings['price_history_path'], _receive_conn)
     print('d')
