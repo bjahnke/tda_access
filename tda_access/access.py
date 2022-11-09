@@ -484,6 +484,7 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
             live_quote_fp: str,
             price_history_fp: str,
             interval: int,
+            interval_type: str,
             # fetch_data_params: t.Optional[t.Dict] = None,
             # fetch_price_data: t.Optional[abstract_access.DATA_FETCH_FUNCTION] = None,
 
@@ -504,7 +505,8 @@ class TdBrokerClient(abstract_access.AbstractBrokerClient):
             quote_file_path=live_quote_fp,
             history_path=price_history_fp,
             fetch_price_data=self.easy_get_price_history,
-            interval=interval
+            interval=interval,
+            interval_type=interval_type
         )
 
 
@@ -517,9 +519,10 @@ class TdTickerStream(abstract_access.AbstractTickerStream):
             quote_file_path,
             history_path,
             fetch_price_data: abstract_access.DATA_FETCH_FUNCTION,
-            interval
+            interval: int,
+            interval_type: str
     ):
-        super().__init__(stream_parser, quote_file_path, history_path, fetch_price_data, interval)
+        super().__init__(stream_parser, quote_file_path, history_path, fetch_price_data, interval, interval_type)
         self._account_id = account_id
         self._current_quotes = {}
         self._broker_client = broker_client
@@ -546,7 +549,7 @@ class TdTickerStream(abstract_access.AbstractTickerStream):
             if now > last + datetime.timedelta(seconds=1):
                 print(f'Waiting: {fetch_time - now}', end='\r')
                 last = now
-        history_data = self.get_all_symbol_data(symbols, self._interval)
+        history_data = self.get_all_symbol_data(symbols, self._interval, self._interval_type)
         history_data.to_csv(self._history_path)
         print('streaming start')
         asyncio.run(
@@ -557,6 +560,8 @@ class TdTickerStream(abstract_access.AbstractTickerStream):
                 ]
             )
         )
+
+
 
     def handle_stream(self, msg, send_conn):
         parsed_data = self.__class__.get_symbol(msg)
